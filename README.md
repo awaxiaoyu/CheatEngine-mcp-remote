@@ -1,5 +1,7 @@
 ﻿# Cheat Engine MCP Bridge - 远程版
 
+**如果觉得好用就给个star吧，谢谢喵**
+
 Connect Cursor, Copilot & Claude directly to Cheat Engine via MCP. **支持远程网络连接！**
 
 在原版 [cheatengine-mcp-bridge](https://github.com/miscusi-peek/cheatengine-mcp-bridge) 基础上添加了 **TCP 远程连接支持**，让你可以在一台电脑上运行 AI 助手，远程控制另一台电脑上的 Cheat Engine。
