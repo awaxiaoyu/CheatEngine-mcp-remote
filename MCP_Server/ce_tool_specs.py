@@ -34,6 +34,7 @@ class ToolSpec:
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("get_process_info", "get_process_info", "Get current process ID, name, modules count and architecture."),
+    ToolSpec("get_bridge_status", "get_bridge_status", "Get CE Lua bridge runtime status and diagnostic counters."),
     ToolSpec("enum_modules", "enum_modules", "List all loaded modules (DLLs) with their base addresses and sizes."),
     ToolSpec("get_thread_list", "get_thread_list", "Get list of threads in the attached process."),
     ToolSpec(

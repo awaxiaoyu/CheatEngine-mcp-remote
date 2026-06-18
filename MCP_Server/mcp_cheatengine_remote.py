@@ -36,6 +36,7 @@ CE_BRIDGE_TOKEN = os.environ.get("CE_BRIDGE_TOKEN", "")
 MCP_SERVER_NAME = "cheatengine"
 MAX_RESPONSE_SIZE = 16 * 1024 * 1024
 AUTH_METHOD = "__ce_bridge_auth"
+STATUS_METHOD = "__ce_bridge_status"
 
 
 def _float_env(name: str, default: float) -> float:
@@ -178,6 +179,12 @@ class CERemoteClient:
 mcp = FastMCP(MCP_SERVER_NAME)
 ce_client = CERemoteClient()
 register_ce_tools(mcp, ce_client.send_command, format_result)
+
+
+@mcp.tool()
+def get_remote_transport_status() -> str:
+    """Get remote TCP bridge transport status without touching the CE named pipe."""
+    return format_result(ce_client.send_command(STATUS_METHOD, {}))
 
 
 if __name__ == "__main__":

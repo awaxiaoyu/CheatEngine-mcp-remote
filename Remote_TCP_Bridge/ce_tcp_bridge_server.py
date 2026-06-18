@@ -28,7 +28,9 @@ TCP_HOST = os.environ.get("CE_TCP_HOST", "0.0.0.0")
 TCP_PORT = int(os.environ.get("CE_REMOTE_PORT", os.environ.get("CE_TCP_PORT", "17171")))
 CE_BRIDGE_TOKEN = os.environ.get("CE_BRIDGE_TOKEN", "")
 AUTH_METHOD = "__ce_bridge_auth"
+STATUS_METHOD = "__ce_bridge_status"
 MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+SERVER_STARTED_AT = time.time()
 
 
 def _float_env(name, default):
@@ -43,6 +45,8 @@ PIPE_HOLD_TIMEOUT = _float_env("CE_PIPE_HOLD_TIMEOUT", max(120.0, CE_TCP_TIMEOUT
 
 # CE Lua pipe is single-instance; access must be serialized.
 pipe_lock = threading.Lock()
+client_count_lock = threading.Lock()
+active_client_count = 0
 
 
 def recv_exact(sock, size):
@@ -83,6 +87,44 @@ def read_frame_from_bytes(data):
 def send_framed_json(sock, message):
     payload = json.dumps(message).encode("utf-8")
     sock.sendall(struct.pack("<I", len(payload)) + payload)
+
+
+def build_transport_status():
+    with client_count_lock:
+        clients = active_client_count
+    return {
+        "success": True,
+        "uptime_seconds": int(time.time() - SERVER_STARTED_AT),
+        "auth_enabled": bool(CE_BRIDGE_TOKEN),
+        "tcp_timeout": CE_TCP_TIMEOUT,
+        "pipe_hold_timeout": PIPE_HOLD_TIMEOUT,
+        "active_client_count": clients,
+        "listening_host": TCP_HOST,
+        "listening_port": TCP_PORT,
+        "max_message_size": MAX_MESSAGE_SIZE,
+    }
+
+
+def read_client_request_frame(client_socket):
+    header, body = read_framed_message(client_socket)
+    return header, body
+
+
+def handle_internal_request(client_socket):
+    header, body = read_client_request_frame(client_socket)
+    try:
+        request = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return False, (header, body)
+
+    if request.get("method") != STATUS_METHOD:
+        return False, (header, body)
+
+    send_framed_json(
+        client_socket,
+        {"jsonrpc": "2.0", "result": build_transport_status(), "id": request.get("id")},
+    )
+    return True, None
 
 
 def authenticate_client(client_socket, expected_token=CE_BRIDGE_TOKEN):
@@ -171,8 +213,11 @@ def read_pipe_exact(pipe_handle, size):
     return b"".join(chunks)
 
 
-def handle_single_request(pipe_handle, client_socket):
-    header, data = read_framed_message(client_socket)
+def handle_single_request(pipe_handle, client_socket, first_frame=None):
+    if first_frame is None:
+        header, data = read_framed_message(client_socket)
+    else:
+        header, data = first_frame
 
     win32file.WriteFile(pipe_handle, header)
     win32file.WriteFile(pipe_handle, data)
@@ -188,11 +233,18 @@ def handle_single_request(pipe_handle, client_socket):
 
 
 def pipe_client_thread(client_socket, client_addr):
+    global active_client_count
     pipe_handle = None
     try:
+        with client_count_lock:
+            active_client_count += 1
         client_socket.settimeout(CE_TCP_TIMEOUT)
         if not authenticate_client(client_socket):
             print(f"[拒绝] 客户端 {client_addr} 认证失败")
+            return
+
+        handled, first_frame = handle_internal_request(client_socket)
+        if handled:
             return
 
         with pipe_lock:
@@ -204,7 +256,8 @@ def pipe_client_thread(client_socket, client_addr):
             deadline = time.monotonic() + PIPE_HOLD_TIMEOUT
             try:
                 while time.monotonic() < deadline:
-                    handle_single_request(pipe_handle, client_socket)
+                    handle_single_request(pipe_handle, client_socket, first_frame)
+                    first_frame = None
                 print(f"[超时] 客户端 {client_addr} 持有 Pipe 超过 {PIPE_HOLD_TIMEOUT:g}s，关闭连接")
             except (ConnectionError, ConnectionResetError):
                 print(f"[断开] 客户端 {client_addr} 已断开")
@@ -219,6 +272,8 @@ def pipe_client_thread(client_socket, client_addr):
                 pipe_handle = None
                 time.sleep(0.1)
     finally:
+        with client_count_lock:
+            active_client_count = max(0, active_client_count - 1)
         if pipe_handle is not None:
             close_pipe_handle(pipe_handle)
         try:

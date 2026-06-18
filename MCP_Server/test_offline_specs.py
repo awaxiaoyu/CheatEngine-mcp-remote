@@ -119,6 +119,19 @@ class ToolSpecTests(unittest.TestCase):
         legacy = {"get_version", "list_processes", "attach_process", "get_module_base"}
         self.assertTrue(legacy.isdisjoint(ce_tool_specs.TOOL_NAMES))
 
+    def test_bridge_status_is_shared_ce_tool(self):
+        import ce_tool_specs
+
+        self.assertIn("get_bridge_status", ce_tool_specs.TOOL_NAMES)
+        status_spec = next(spec for spec in ce_tool_specs.TOOL_SPECS if spec.name == "get_bridge_status")
+        self.assertEqual("get_bridge_status", status_spec.method)
+
+        mcp = FakeMCP()
+        recorder = Recorder()
+        ce_tool_specs.register_ce_tools(mcp, recorder.send, lambda result: result)
+        mcp.tools["get_bridge_status"]()
+        self.assertEqual(("get_bridge_status", {}), recorder.calls[-1])
+
 
 class TcpProtocolTests(unittest.TestCase):
     @classmethod
@@ -180,6 +193,57 @@ class TcpProtocolTests(unittest.TestCase):
         _, body = self.tcp_server.read_frame_from_bytes(sock.sent)
         response = json.loads(body.decode("utf-8"))
         self.assertIn("error", response)
+
+    def test_transport_status_has_safe_fields(self):
+        status = self.tcp_server.build_transport_status()
+        self.assertTrue(status["success"])
+        self.assertIn("uptime_seconds", status)
+        self.assertIn("auth_enabled", status)
+        self.assertIn("active_client_count", status)
+        encoded = json.dumps(status)
+        self.assertNotIn("CE_BRIDGE_TOKEN", encoded)
+        self.assertNotIn("secret", encoded)
+
+    def test_status_request_is_handled_without_pipe(self):
+        request = {
+            "jsonrpc": "2.0",
+            "method": self.tcp_server.STATUS_METHOD,
+            "params": {},
+            "id": 7,
+        }
+        sock = FakeSocket([frame(request)])
+        handled, first_frame = self.tcp_server.handle_internal_request(sock)
+        self.assertTrue(handled)
+        self.assertIsNone(first_frame)
+        _, body = self.tcp_server.read_frame_from_bytes(sock.sent)
+        response = json.loads(body.decode("utf-8"))
+        self.assertEqual(7, response["id"])
+        self.assertTrue(response["result"]["success"])
+
+    def test_status_request_after_auth_is_handled_without_pipe(self):
+        auth = {
+            "jsonrpc": "2.0",
+            "method": self.tcp_server.AUTH_METHOD,
+            "params": {"token": "secret"},
+            "id": "auth",
+        }
+        request = {
+            "jsonrpc": "2.0",
+            "method": self.tcp_server.STATUS_METHOD,
+            "params": {},
+            "id": "status",
+        }
+        sock = FakeSocket([frame(auth), frame(request)])
+        self.assertTrue(self.tcp_server.authenticate_client(sock, "secret"))
+        handled, first_frame = self.tcp_server.handle_internal_request(sock)
+        self.assertTrue(handled)
+        self.assertIsNone(first_frame)
+
+        first_header, first_body = self.tcp_server.read_frame_from_bytes(sock.sent)
+        remaining = sock.sent[4 + struct.unpack("<I", first_header)[0]:]
+        _, second_body = self.tcp_server.read_frame_from_bytes(remaining)
+        self.assertTrue(json.loads(first_body.decode("utf-8"))["result"]["success"])
+        self.assertTrue(json.loads(second_body.decode("utf-8"))["result"]["success"])
 
 
 if __name__ == "__main__":

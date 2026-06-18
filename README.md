@@ -165,6 +165,27 @@ New-NetFirewallRule -DisplayName "CE MCP Bridge" -Direction Inbound -Protocol TC
 
 ---
 
+## 诊断与排障
+
+### 本地模式
+
+1. 先调用 `ping`，确认 MCP server 能连接 CE Named Pipe。
+2. 再调用 `get_bridge_status`，查看 `process_attached`、`module_count`、`scan_active`、`breakpoint_count`、`active_dbvm_watch_count`。
+
+### 远程模式
+
+1. 先调用 `get_remote_transport_status`，确认 TCP bridge 本身在线、`auth_enabled` 是否符合预期、`active_client_count` 是否异常。
+2. 再调用 `get_bridge_status`，确认远端 CE Lua bridge 已加载并能访问目标进程。
+
+常见判断：
+
+- **token mismatch**: `get_remote_transport_status` 连接失败或认证失败，检查两端 `CE_BRIDGE_TOKEN` 是否一致。
+- **Pipe busy / CE 未加载 Lua**: transport 状态正常，但 `ping` 或 `get_bridge_status` 失败，检查 Cheat Engine 是否加载 `ce_mcp_bridge.lua`。
+- **DBVM 未启用**: `get_bridge_status.capabilities.dbvm_available=false`，需要在 CE 设置里启用 DBVM/DBK 后再使用 DBVM 工具。
+- **连接长期占用**: `active_client_count` 异常偏高或请求超时，检查是否有旧 MCP 客户端未退出。
+
+---
+
 ## 安全提示
 
 1. **兼容默认**: 未设置 `CE_BRIDGE_TOKEN` 时仍是无认证 TCP，方便旧配置继续使用，但只建议在可信局域网内使用。

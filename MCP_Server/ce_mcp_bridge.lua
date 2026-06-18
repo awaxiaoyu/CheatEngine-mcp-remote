@@ -11,6 +11,7 @@
 
 local PIPE_NAME = "CE_MCP_Bridge_v99"
 local VERSION = "11.4.0"
+local commandHandlers
 
 -- Global State
 local serverState = {
@@ -1408,6 +1409,79 @@ local function cmd_ping(params)
     }
 end
 
+local function countTableEntries(tbl)
+    local count = 0
+    if tbl then
+        for _, _ in pairs(tbl) do count = count + 1 end
+    end
+    return count
+end
+
+local function countBreakpointHits()
+    local count = 0
+    if serverState.breakpoint_hits then
+        for _, hitsForBp in pairs(serverState.breakpoint_hits) do
+            if hitsForBp then count = count + #hitsForBp end
+        end
+    end
+    return count
+end
+
+local function cmd_get_bridge_status(params)
+    local pid = getOpenedProcessID() or 0
+    local processAttached = pid > 0
+    local processName = processAttached and ((process ~= "" and process) or "unknown") or ""
+    local moduleCount = 0
+    if processAttached then
+        local okModules, modules = pcall(enumModules, pid)
+        if okModules and modules then moduleCount = #modules end
+    end
+
+    local scanResultCount = 0
+    if serverState.scan_foundlist then
+        local okCount, count = pcall(function() return serverState.scan_foundlist.getCount() end)
+        if okCount and count then scanResultCount = count end
+    end
+
+    local dbvmAvailable = false
+    local dbvmError = nil
+    local okDbvm, dbvmResult = pcall(function()
+        if dbk_getPhysicalAddress then
+            return true
+        end
+        return false
+    end)
+    if okDbvm then
+        dbvmAvailable = dbvmResult == true
+    else
+        dbvmError = tostring(dbvmResult)
+    end
+
+    return {
+        success = true,
+        version = VERSION,
+        timestamp = os.time(),
+        process_attached = processAttached,
+        process_id = pid,
+        process_name = processName,
+        module_count = moduleCount,
+        connected = serverState.connected or false,
+        running = serverState.running or false,
+        scan_active = serverState.scan_memscan ~= nil and serverState.scan_foundlist ~= nil,
+        scan_result_count = scanResultCount,
+        breakpoint_count = countTableEntries(serverState.breakpoints),
+        breakpoint_hit_count = countBreakpointHits(),
+        active_dbvm_watch_count = countTableEntries(serverState.active_watches),
+        command_handler_count = countTableEntries(commandHandlers),
+        capabilities = {
+            lua_eval = commandHandlers.evaluate_lua ~= nil,
+            auto_assemble = commandHandlers.auto_assemble ~= nil,
+            dbvm_available = dbvmAvailable,
+            dbvm_error = dbvmError
+        }
+    }
+end
+
 local function cmd_search_string(params)
     local searchStr = params.string or params.pattern
     local wide = params.wide or false
@@ -2074,9 +2148,10 @@ end
 -- COMMAND DISPATCHER
 -- ============================================================================
 
-local commandHandlers = {
+commandHandlers = {
     -- Process & Modules
     get_process_info = cmd_get_process_info,
+    get_bridge_status = cmd_get_bridge_status,
     enum_modules = cmd_enum_modules,
     get_symbol_address = cmd_get_symbol_address,
     
