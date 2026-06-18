@@ -627,6 +627,15 @@ end
 local function cmd_scan_all(params)
     local value = params.value
     local vtype = params.type or "dword"
+
+    if serverState.scan_foundlist then
+        pcall(function() serverState.scan_foundlist.destroy() end)
+        serverState.scan_foundlist = nil
+    end
+    if serverState.scan_memscan then
+        pcall(function() serverState.scan_memscan.destroy() end)
+        serverState.scan_memscan = nil
+    end
     
     local ms = createMemScan()
     local scanOpt = soExactValue
@@ -1246,6 +1255,7 @@ local function cmd_remove_breakpoint(params)
         end
         
         serverState.breakpoints[bpId] = nil
+        serverState.breakpoint_hits[bpId] = nil
         return { success = true, id = bpId }
     end
     
@@ -1268,7 +1278,13 @@ local function cmd_get_breakpoint_hits(params)
                 table.insert(hits, hit)
             end
         end
-        if clear then serverState.breakpoint_hits = {} end
+        if clear then
+            local fresh = {}
+            for activeId, _ in pairs(serverState.breakpoints) do
+                fresh[activeId] = {}
+            end
+            serverState.breakpoint_hits = fresh
+        end
     end
     
     return { success = true, count = #hits, hits = hits }
